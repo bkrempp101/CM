@@ -1,0 +1,1923 @@
+Directory Structure:
+
+ai-chat-app/
+├── public/
+│   └── index.html
+├── src/
+│   ├── components/
+│   │   ├── ChatView.js
+│   │   ├── DocumentUploadView.js
+│   │   ├── EmailManagement.js
+│   │   ├── FileManager.js
+│   │   ├── Login.js
+│   │   └── Navigation.js
+│   ├── services/
+│   │   ├── AutoResponder.js
+│   │   ├── DataManager.js
+│   │   ├── EmailReader.js
+│   │   ├── EmailSender.js
+│   │   ├── EncryptionManager.js
+│   │   ├── LocalLLM.js
+│   │   └── ResponseGenerator.js
+│   ├── utils/
+│   │   └── errorHandling.js
+│   ├── App.js
+│   └── index.js
+├── server/
+│   └── server.js
+├── package.json
+└── README.md
+
+Component Code:
+
+// public/index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat App</title>
+</head>
+<body>
+    <div id="root"></div>
+</body>
+</html>
+
+// src/App.js
+import React, { useState } from 'react';
+import ChatView from './components/ChatView';
+import DocumentUploadView from './components/DocumentUploadView';
+import EmailManagement from './components/EmailManagement';
+import Login from './components/Login';
+import Navigation from './components/Navigation';
+import FileManager from './components/FileManager';
+
+function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentView, setCurrentView] = useState('chat');
+
+  if (!isLoggedIn) {
+    return <Login onLogin={() => setIsLoggedIn(true)} />;
+  }
+
+  return (
+    <div className="App">
+      <Navigation setCurrentView={setCurrentView} />
+      {currentView === 'chat' && <ChatView />}
+      {currentView === 'document' && <DocumentUploadView />}
+      {currentView === 'email' && <EmailManagement />}
+      {currentView === 'files' && <FileManager />}
+    </div>
+  );
+}
+
+export default App;
+
+// src/index.js
+import React from 'react';
+import ReactDOM from 'react-dom';
+import App from './App';
+
+ReactDOM.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+  document.getElementById('root')
+);
+
+// src/components/ChatView.js
+import React, { useState, useEffect } from 'react';
+import LocalLLM from '../services/LocalLLM';
+
+const ChatView = () => {
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [llm, setLLM] = useState(null);
+
+  useEffect(() => {
+    const initLLM = async () => {
+      const llmInstance = new LocalLLM();
+      await llmInstance.init();
+      setLLM(llmInstance);
+    };
+    initLLM();
+  }, []);
+
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !llm) return;
+
+    const userMessage = { id: Date.now(), content: newMessage, isUser: true };
+    setMessages(prevMessages => [...prevMessages, userMessage]);
+
+    const response = await llm.generateResponse(newMessage);
+    if (response) {
+      const botMessage = { id: Date.now() + 1, content: response, isUser: false };
+      setMessages(prevMessages => [...prevMessages, botMessage]);
+    }
+
+    setNewMessage('');
+  };
+
+  return (
+    <div className="chat-view">
+      <div className="message-list">
+        {messages.map(message => (
+          <div key={message.id} className={`message ${message.isUser ? 'user' : 'bot'}`}>
+            {message.content}
+          </div>
+        ))}
+      </div>
+      <div className="message-input">
+        <input
+          type="text"
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          placeholder="Type a message"
+        />
+        <button onClick={sendMessage}>Send</button>
+      </div>
+    </div>
+  );
+};
+
+export default ChatView;
+
+// src/components/DocumentUploadView.js
+import React, { useState } from 'react';
+import LocalLLM from '../services/LocalLLM';
+import { log } from '../utils/errorHandling';
+
+const DocumentUploadView = () => {
+  const [document, setDocument] = useState(null);
+  const [error, setError] = useState(null);
+  const llm = new LocalLLM();
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      try {
+        const data = await readFileAsArrayBuffer(file);
+        setDocument(data);
+        await llm.train(data);
+        setError(null);
+      } catch (err) {
+        setError('Failed to upload document');
+        log(err.message, 'ERROR');
+      }
+    }
+  };
+
+  const readFileAsArrayBuffer = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = (e) => reject(e);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  return (
+    <div className="document-upload">
+      <h2>Document Upload</h2>
+      {document && <p>Document uploaded: {document.byteLength} bytes</p>}
+      {error && <p className="error">{error}</p>}
+      <input type="file" onChange={handleFileUpload} />
+    </div>
+  );
+};
+
+export default DocumentUploadView;
+
+// src/components/EmailManagement.js
+import React, { useState, useEffect } from 'react';
+import EmailReader from '../services/EmailReader';
+import AutoResponder from '../services/AutoResponder';
+import ResponseGenerator from '../services/ResponseGenerator';
+import EmailSender from '../services/EmailSender';
+import { log } from '../utils/errorHandling';
+
+const EmailManagement = () => {
+  const [emails, setEmails] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const emailReader = new EmailReader();
+  const autoResponder = new AutoResponder();
+  const responseGenerator = new ResponseGenerator();
+  const emailSender = new EmailSender();
+
+  useEffect(() => {
+    fetchEmails();
+  }, []);
+
+  const fetchEmails = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const fetchedEmails = await emailReader.fetchEmails('user@example.com', 'password', 'imap.example.com', 993);
+      setEmails(fetchedEmails);
+    } catch (err) {
+      setError('Failed to fetch emails');
+      log(err.message, 'ERROR');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmail = async (email) => {
+    try {
+      const autoResponse = await autoResponder.generateAutoResponse(email);
+      if (autoResponse) {
+        await emailSender.sendResponse(autoResponse, email.from);
+      } else {
+        const generatedResponse = await responseGenerator.generateResponse(email);
+        await emailSender.sendResponse(generatedResponse, email.from);
+      }
+      setEmails(prevEmails => prevEmails.filter(e => e.id !== email.id));
+    } catch (err) {
+      setError(`Failed to handle email: ${err.message}`);
+      log(err.message, 'ERROR');
+    }
+  };
+
+  if (loading) return <div>Loading emails...</div>;
+  if (error) return <div className="error">{error}</div>;
+
+  return (
+    <div className="email-management">
+      <h2>Email Management</h2>
+      <button onClick={fetchEmails}>Refresh Emails</button>
+      <ul>
+        {emails.map(email => (
+          <li key={email.id}>
+            {email.subject}
+            <button onClick={() => handleEmail(email)}>Handle</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+export default EmailManagement;
+
+// src/components/FileManager.js
+import React, { useState, useEffect } from 'react';
+
+const FileManager = () => {
+  const [files, setFiles] = useState([]);
+  const [selectedFile, setSelectedFile] = useState('');
+  const [fileContent, setFileContent] = useState('');
+
+  useEffect(() => {
+    fetchFiles();
+  }, []);
+
+  const fetchFiles = async () => {
+    try {
+      const response = await fetch('/api/files');
+      const data = await response.json();
+      setFiles(data.files);
+    } catch (error) {
+      console.error('Error fetching files:', error);
+    }
+  };
+
+  const handleFileSelect = async (filename) => {
+    setSelectedFile(filename);
+    try {
+      const response = await fetch(`/api/file/${filename}`);
+      const data = await response.json();
+      setFileContent(data.content);
+    } catch (error) {
+      console.error('Error reading file:', error);
+    }
+  };
+
+  const handleContentChange = (e) => {
+    setFileContent(e.target.value);
+  };
+
+  const handleSave = async () => {
+    try {
+      await fetch(`/api/file/${selectedFile}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content: fileContent }),
+      });
+      alert('File saved successfully');
+    } catch (error) {
+      console.error('Error saving file:', error);
+    }
+  };
+
+  return (
+    <div className="file-manager">
+      <h2>File Manager</h2>
+      <div className="file-list">
+        <h3>Files:</h3>
+        <ul>
+          {files.map((file) => (
+            <li key={file} onClick={() => handleFileSelect(file)}>
+              {file}
+            </li>
+          ))}
+        </ul>
+      </div>
+      {selectedFile && (
+        <div className="file-editor">
+          <h3>Editing: {selectedFile}</h3>
+          <textarea
+            value={fileContent}
+            onChange={handleContentChange}
+            rows={10}
+            cols={50}
+          />
+          <button onClick={handleSave}>Save</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default FileManager;
+
+// src/components/Login.js
+import React, { useState } from 'react';
+
+const Login = ({ onLogin }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    // Here you would typically validate the credentials with your backend
+    // For now, we'll just call onLogin
+    onLogin();
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="text"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        placeholder="Username"
+      />
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Password"
+      />
+      <button type="submit">Login</button>
+    </form>
+  );
+};
+
+export default Login;
+
+// src/components/Navigation.js
+import React from 'react';
+
+const Navigation = ({ setCurrentView }) => {
+  return (
+    <nav>
+      <button onClick={() => setCurrentView('chat')}>Chat</button>
+      <button onClick={() => setCurrentView('document')}>Document Upload</button>
+      <button onClick={() => setCurrentView('email')}>Email Management</button>
+      <button onClick={() => setCurrentView('files')}>File Manager</button>
+    </nav>
+  );
+};
+
+export default Navigation;
+
+// src/services/AutoResponder.js
+class AutoResponder {
+  async generateAutoResponse(email) {
+    // Implement auto-response generation logic here
+    // This is a placeholder
+    return Promise.resolve(null);
+  }
+}
+
+export default AutoResponder;
+
+// src/services/DataManager.js
+class DataManager {
+  saveData(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  getData(key) {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : null;
+  }
+}
+
+export default new DataManager();
+
+// src/services/EmailReader.js
+class EmailReader {
+  async fetchEmails(username, password, server, port) {
+    // Implement email fetching logic here
+    // This is a placeholder
+    return Promise.resolve([
+      { id: 1, subject: 'Test Email 1', from: 'sender1@example.com' },
+      { id: 2, subject: 'Test Email 2', from: 'sender2@example.com' },
+    ]);
+  }
+}
+
+export default EmailReader;
+
+// src/services/EmailSender.js
+class EmailSender {
+  async sendResponse(response, recipient) {
+    // Implement email sending logic here
+    // This is a placeholder
+    console.log(`Sending email to ${recipient}: ${response}`);
+    return Promise.resolve();
+  }
+}
+
+export default EmailSender;
+
+// src/services/EncryptionManager.js
+import CryptoJS from 'crypto-js';
+
+class EncryptionManager {
+  constructor() {
+    this.key = CryptoJS.lib.WordArray.random(32);
+  }
+
+  encrypt(data) {
+    return CryptoJS.AES.encrypt(JSON.stringify(data), this.key.toString()).toString();
+  }
+
+  decrypt(ciphertext) {
+    const bytes = CryptoJS.AES.decrypt(ciphertext, this.key.toString());
+    return JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+  }
+}
+
+export default new EncryptionManager();
+
+// src/services/LocalLLM.js
+class LocalLLM {
+  constructor() {
+    this.model = null;
+  }
+
+  async init() {
+    // In a real app, you'd initialize your LLM here
+    this.model = { ready: true };
+    return Promise.resolve();
+  }
+
+  async generateResponse(input) {
+    if (!this.model) {
+      throw new Error('LLM not initialized');
+    }
+    // This is a placeholder. In a real app, you'd use an actual LLM here.
+    return Promise.resolve(`Response to: ${input}`);
+  }
+
+  async train(data) {
+    console.log(`Training with ${data.byteLength} bytes of data`);
+    // In a real app, you'd implement actual training logic here
+    return Promise.resolve();
+  }
+}
+
+export default LocalLLM;
+
+// src/services/ResponseGenerator.js
+class ResponseGenerator {
+  async generateResponse(email) {
+    // Implement response generation logic here
+    // This is a placeholder
+    return Promise.resolve(`Auto-generated response to: ${email.subject}`);
+  }
+}
+
+export default ResponseGenerator;
+
+// src/utils/errorHandling.js
+export const AppError = {
+  DATA_CORRUPTION: 'DATA_CORRUPTION',
+  OPERATION_FAILED: 'OPERATION_FAILED',
+  INVALID_INPUT: 'INVALID_INPUT',
+};
+
+export const log = (message, type = 'INFO') => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] [${type}] ${message}`);
+  // In a real app, you might want to send this to a logging service
+};
+
+// server/server.js
+const express = require('express');
+const fs = require('fs').promises;
+const path = require('path');
+const app = express();
+const port = process.env.PORT || 3001;
+
+app.use(express.json());
+
+// Serve static files from the React app
+app.use(express.static(path.join(__dirname, '../build')));
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'OK' });
+});
+
+// Read file contents
+app.get('/api/file/:filename', async (req, res) => {
+  try {
+    const filePath = path.join(__dirname, '../data', req.params.filename);
+    const content = await fs.readFile(filePath, 'utf8');
+    res.json({ content });
+  } catch (error) {
+    res.status(500).json({ error: 'Error reading file' });
+  }
+});
+
+// Write to file
+app.post('/api/file/:filename', async (req, res) => {
+  try {
+    const filePath = path.join(__dirname, '../data', req.params.filename);
+    await fs.writeFile(filePath, req.body.content);
+    res.json({ message: 'File written successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error writing to file' });
+  }
+});
+
+// List files in the data directory
+app.get('/api/files', async (req, res) => {
+  try {
+    const dataDir = path.join(__dirname, '../data');
+    const files = await fs.readdir(dataDir);
+    res.json({ files });
+  } catch (error) {
+    res.status(500).json({ error: 'Error listing files' });
+  }
+});
+
+// The "catchall" handler: for any request that doesn't
+// match one above, send back React's index.html file.
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../build/index.html'));
+});
+
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
+
+// package.json
+{
+  "name": "ai-chat-app",
+  "version": "1.0.0",
+  "description": "AI Chat Application",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "server": "node server/server.js"
+  },
+  "dependencies": {
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2",
+    "react-scripts": "4.0.3",
+    "express": "^4.17.1",
+    "crypto-js": "^4.0.0"
+  },
+  "devDependencies": {},
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
+
+Component Explanations:
+
+1. App.js: Main component that manages the overall structure and navigation of the application.
+2. ChatView.js: Handles the chat interface, including sending messages and displaying responses.
+3. DocumentUploadView.js: Manages document uploads and processing.
+4. EmailManagement.js: Handles email fetching, auto-responding, and manual response generation.
+5. FileManager.js: Provides file management capabilities, including listing, reading, and writing files.
+6. Login.js: Handles user authentication (currently a placeholder).
+7. Navigation.js: Provides navigation between different views of the application.
+8. AutoResponder.js: Service for generating automatic email responses.
+9. DataManager.js: Manages data storage and retrieval (currently using localStorage).
+10. EmailReader.js: Service for fetching emails (currently a placeholder).
+11. EmailSender.js: Service for sending emails (currently a placeholder).
+12. EncryptionManager.js: Provides encryption and decryption capabilities.
+13. LocalLLM.js: Represents a local language model (currently a placeholder).
+14. ResponseGenerator.js: Service for generating responses to emails.
+15. errorHandling.js: Utility for error handling and logging.
+16. server.js: Express server handling API requests and serving the React app.
+
+Full List of Components:
+- App
+- ChatView
+- DocumentUploadView
+- EmailManagement
+- FileManager
+- Login
+- Navigation
+- AutoResponder
+- DataManager
+- EmailReader
+- EmailSender
+- EncryptionManager
+- LocalLLM
+- ResponseGenerator
+
+Missing and Needed:
+1. Actual LLM implementation: Replace the placeholder in LocalLLM with a real language model.
+2. Email integration: Implement real email fetching and sending in EmailReader and EmailSender.
+3. Authentication: Implement proper user authentication, possibly integrating with WordPress backend.
+4. Styling: Add CSS to make the interface resemble ChatGPT.
+5. Error handling: Expand error handling for production-ready robustness.
+6. Testing: Add unit and integration tests for all components and services.
+7. Environment variables: Use for sensitive information like API keys and credentials.
+8. Database integration: Replace localStorage with a proper database for data persistence.
+9. Security measures: Implement proper security, especially for file operations and API endpoints.
+10. Deployment configuration: Add necessary configs for production deployment.
+11. WordPress integration: Integrate with existing WordPress backend as needed.
+12. File type handling: Implement proper handling and processing for various document types.
+13. User management: Add user registration, profile management, and multi-user support.
+14. Conversation history: Implement saving and loading of chat histories.
+15. Performance optimization: Optimize for handling large numbers of messages and documents.
+
+
+
+
+I'll create a comprehensive file with all the code, explanations for each component, screenshots, and instructions for your developer. Here's the content for the file:
+
+```markdown
+# AI Chat Application Implementation Guide
+
+## Table of Contents
+1. [Overview](#overview)
+2. [Setup Instructions](#setup-instructions)
+3. [Components](#components)
+   - [App](#app)
+   - [Navigation](#navigation)
+   - [Login](#login)
+   - [ChatView](#chatview)
+   - [EmailManagement](#emailmanagement)
+   - [DocumentUploadView](#documentuploadview)
+   - [FileManager](#filemanager)
+   - [UserSettings](#usersettings)
+4. [Contexts](#contexts)
+   - [AuthContext](#authcontext)
+   - [ThemeContext](#themecontext)
+5. [Utility Components](#utility-components)
+   - [ErrorMessage](#errormessage)
+   - [Loading](#loading)
+6. [Next Steps](#next-steps)
+
+## Overview
+
+This AI Chat Application is a React-based front-end that includes various features such as chat, email management, document upload, file management, and user settings. It uses a custom routing system and theme management.
+
+## Setup Instructions
+
+1. Create a new React project using Create React App with TypeScript:
+```
+
+npx create-react-app ai-chat-app --template typescript
+
+```plaintext
+
+2. Navigate to the project directory:
+```
+
+cd ai-chat-app
+
+```plaintext
+
+3. Install necessary dependencies:
+```
+
+npm install @types/react @types/react-dom
+
+```plaintext
+
+4. Replace the contents of the `src` folder with the provided code files.
+
+5. Run the application:
+```
+
+npm start
+
+```plaintext
+
+## Components
+
+### App
+
+The main component that handles routing and renders other components based on the current route.
+
+```tsx
+import React, { Suspense, lazy, useState } from 'react';
+import { AuthProvider } from './contexts/AuthContext';
+import { ThemeProvider } from './contexts/ThemeContext';
+import Navigation from './components/Navigation';
+import Loading from './components/Loading';
+
+const ChatView = lazy(() => import('./components/ChatView'));
+const EmailManagement = lazy(() => import('./components/EmailManagement'));
+const DocumentUploadView = lazy(() => import('./components/DocumentUploadView'));
+const FileManager = lazy(() => import('./components/FileManager'));
+const UserSettings = lazy(() => import('./components/UserSettings'));
+const Login = lazy(() => import('./components/Login'));
+
+export type Route = '/' | '/email' | '/documents' | '/files' | '/settings' | '/login';
+
+const ThemedApp: React.FC = () => {
+const { theme } = useTheme();
+const [currentRoute, setCurrentRoute] = useState<Route>('/');
+
+const renderComponent = () => {
+ switch (currentRoute) {
+   case '/':
+     return <ChatView />;
+   case '/email':
+     return <EmailManagement />;
+   case '/documents':
+     return <DocumentUploadView />;
+   case '/files':
+     return <FileManager />;
+   case '/settings':
+     return <UserSettings />;
+   case '/login':
+     return <Login />;
+   default:
+     return <ChatView />;
+ }
+};
+
+return (
+ <div style={{ 
+   minHeight: '100vh', 
+   backgroundColor: theme.backgroundColor, 
+   color: theme.textColor 
+ }}>
+   <Navigation setCurrentRoute={setCurrentRoute} />
+   <Suspense fallback={<Loading />}>
+     {renderComponent()}
+   </Suspense>
+ </div>
+);
+};
+
+const App: React.FC = () => {
+const [currentRoute, setCurrentRoute] = useState<Route>('/');
+
+return (
+ <AuthProvider setCurrentRoute={setCurrentRoute}>
+   <ThemeProvider>
+     <ThemedApp />
+   </ThemeProvider>
+ </AuthProvider>
+);
+};
+
+export default App;
+```
+
+
+
+
+
+### Navigation
+
+The navigation component that allows users to switch between different views.
+
+```typescriptreact
+import React from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import { Route } from '../App';
+
+interface NavigationProps {
+  setCurrentRoute: (route: Route) => void;
+}
+
+const Navigation: React.FC<NavigationProps> = ({ setCurrentRoute }) => {
+  const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const [menuOpen, setMenuOpen] = React.useState(false);
+
+  const handleNavClick = (route: Route) => {
+    setCurrentRoute(route);
+    setMenuOpen(false);
+  };
+
+  const navStyle = {
+    backgroundColor: theme.navBg,
+    padding: '1rem',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  };
+
+  const navLinkStyle = {
+    color: theme.textColor,
+    textDecoration: 'none',
+    cursor: 'pointer',
+    marginRight: '1rem',
+  };
+
+  const userMenuStyle = {
+    position: 'relative' as const,
+  };
+
+  const userMenuButtonStyle = {
+    background: 'none',
+    border: 'none',
+    color: theme.textColor,
+    cursor: 'pointer',
+  };
+
+  const userMenuDropdownStyle = {
+    position: 'absolute' as const,
+    right: 0,
+    top: '100%',
+    backgroundColor: theme.cardBg,
+    border: `1px solid ${theme.borderColor}`,
+    borderRadius: '0.25rem',
+    padding: '0.5rem',
+  };
+
+  return (
+    <nav style={navStyle}>
+      <div>
+        <a style={navLinkStyle} onClick={() => handleNavClick('/')}>Chat</a>
+        <a style={navLinkStyle} onClick={() => handleNavClick('/email')}>Email</a>
+        <a style={navLinkStyle} onClick={() => handleNavClick('/documents')}>Documents</a>
+        <a style={navLinkStyle} onClick={() => handleNavClick('/files')}>Files</a>
+      </div>
+      {user ? (
+        <div style={userMenuStyle}>
+          <button style={userMenuButtonStyle} onClick={() => setMenuOpen(!menuOpen)}>
+            {user.name}
+          </button>
+          {menuOpen && (
+            <div style={userMenuDropdownStyle}>
+              <a style={navLinkStyle} onClick={() => handleNavClick('/settings')}>Settings</a>
+              <a style={navLinkStyle} onClick={toggleTheme}>Toggle Theme</a>
+              <a style={navLinkStyle} onClick={logout}>Logout</a>
+            </div>
+          )}
+        </div>
+      ) : (
+        <a style={navLinkStyle} onClick={() => handleNavClick('/login')}>Login</a>
+      )}
+    </nav>
+  );
+};
+
+export default Navigation;
+```
+
+
+
+
+
+### Login
+
+The login component that allows users to authenticate.
+
+```typescriptreact
+import React, { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import ErrorMessage from './ErrorMessage';
+
+interface LoginFormData {
+  email: string;
+  password: string;
+}
+
+const Login: React.FC = () => {
+  const { login } = useAuth();
+  const { theme } = useTheme();
+  const [formData, setFormData] = useState<LoginFormData>({ email: '', password: '' });
+  const [error, setError] = useState<string | null>(null);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await login(formData.email, formData.password);
+      // Redirect is handled in the AuthContext
+    } catch (err) {
+      setError('Invalid email or password');
+    }
+  };
+
+  const containerStyle = {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 'calc(100vh - 60px)', // Adjust based on your Navigation height
+  };
+
+  const formStyle = {
+    backgroundColor: theme.cardBg,
+    padding: '2rem',
+    borderRadius: '0.5rem',
+    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+  };
+
+  const inputStyle = {
+    width: '100%',
+    padding: '0.5rem',
+    marginBottom: '1rem',
+    fontSize: '1rem',
+    border: `1px solid ${theme.borderColor}`,
+    borderRadius: '0.25rem',
+  };
+
+  const buttonStyle = {
+    width: '100%',
+    padding: '0.5rem',
+    fontSize: '1rem',
+    backgroundColor: theme.primaryColor,
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.25rem',
+    cursor: 'pointer',
+  };
+
+  return (
+    <div style={containerStyle}>
+      <form style={formStyle} onSubmit={handleSubmit}>
+        <h2>Login</h2>
+        <input
+          style={inputStyle}
+          type="email"
+          name="email"
+          placeholder="Email"
+          value={formData.email}
+          onChange={handleInputChange}
+          required
+        />
+        <input
+          style={inputStyle}
+          type="password"
+          name="password"
+          placeholder="Password"
+          value={formData.password}
+          onChange={handleInputChange}
+          required
+          minLength={6}
+        />
+        <button style={buttonStyle} type="submit">Login</button>
+        {error && <ErrorMessage message={error} />}
+      </form>
+    </div>
+  );
+};
+
+export default Login;
+```
+
+
+
+
+
+### ChatView
+
+The main chat interface component.
+
+```typescriptreact
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import ErrorMessage from './ErrorMessage';
+
+interface Message {
+  id: string;
+  text: string;
+  sender: 'user' | 'ai';
+}
+
+const ChatView: React.FC = () => {
+  const { user } = useAuth();
+  const { theme } = useTheme();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Fetch initial messages or conversation history
+    // This is a placeholder and should be replaced with actual API call
+    setMessages([
+      { id: '1', text: 'Hello! How can I assist you today?', sender: 'ai' },
+    ]);
+  }, []);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+
+    const newMessage: Message = { id: Date.now().toString(), text: input, sender: 'user' };
+    setMessages(prev => [...prev, newMessage]);
+    setInput('');
+
+    try {
+      // Send message to AI and get response
+      // This is a placeholder and should be replaced with actual API call
+      const aiResponse: Message = { id: (Date.now() + 1).toString(), text: 'This is a placeholder AI response.', sender: 'ai' };
+      setMessages(prev => [...prev, aiResponse]);
+    } catch (err) {
+      setError('Failed to get AI response. Please try again.');
+    }
+  };
+
+  const containerStyle = {
+    maxWidth: '800px',
+    margin: '0 auto',
+    padding: '1rem',
+  };
+
+  const chatWindowStyle = {
+    height: 'calc(100vh - 200px)',
+    overflowY: 'auto' as const,
+    border: `1px solid ${theme.borderColor}`,
+    borderRadius: '0.25rem',
+    padding: '1rem',
+    marginBottom: '1rem',
+  };
+
+  const messageStyle = (sender: 'user' | 'ai') => ({
+    backgroundColor: sender === 'user' ? theme.primaryColor : theme.cardBg,
+    color: sender === 'user' ? 'white' : theme.textColor,
+    padding: '0.5rem 1rem',
+    borderRadius: '1rem',
+    marginBottom: '0.5rem',
+    maxWidth: '70%',
+    alignSelf: sender === 'user' ? 'flex-end' : 'flex-start',
+  });
+
+  const inputStyle = {
+    width: '100%',
+    padding: '0.5rem',
+    fontSize: '1rem',
+    border: `1px solid ${theme.borderColor}`,
+    borderRadius: '0.25rem',
+  };
+
+  const buttonStyle = {
+    padding: '0.5rem 1rem',
+    fontSize: '1rem',
+    backgroundColor: theme.primaryColor,
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.25rem',
+    cursor: 'pointer',
+    marginLeft: '0.5rem',
+  };
+
+  if (!user) {
+    return <div>Please log in to use the chat.</div>;
+  }
+
+  return (
+    <div style={containerStyle}>
+      <div style={chatWindowStyle}>
+        {messages.map(message => (
+          <div key={message.id} style={messageStyle(message.sender)}>
+            {message.text}
+          </div>
+        ))}
+      </div>
+      <form onSubmit={handleSendMessage} style={{ display: 'flex' }}>
+        <input
+          style={inputStyle}
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Type your message..."
+        />
+        <button style={buttonStyle} type="submit">Send</button>
+      </form>
+      {error && <ErrorMessage message={error} />}
+    </div>
+  );
+};
+
+export default ChatView;
+```
+
+
+
+
+
+### EmailManagement
+
+The email management component for viewing and responding to emails.
+
+```typescriptreact
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import ErrorMessage from './ErrorMessage';
+
+interface Email {
+  id: string;
+  subject: string;
+  sender: string;
+  body: string;
+  date: string;
+}
+
+const EmailManagement: React.FC = () => {
+  const { user } = useAuth();
+  const { theme } = useTheme();
+  const [emails, setEmails] = useState<Email[]>([]);
+  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
+  const [reply, setReply] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Fetch emails
+    // This is a placeholder and should be replaced with actual API call
+    setEmails([
+      { id: '1', subject: 'Welcome', sender: 'admin@example.com', body: 'Welcome to our platform!', date: '2023-05-01' },
+      { id: '2', subject: 'Your account', sender: 'support@example.com', body: 'Your account has been created successfully.', date: '2023-05-02' },
+    ]);
+  }, []);
+
+  const handleSelectEmail = (email: Email) => {
+    setSelectedEmail(email);
+    setReply('');
+  };
+
+  const handleSendRe
+
+ply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmail || !reply.trim()) return;
+
+    try {
+      // Send reply
+      // This is a placeholder and should be replaced with actual API call
+      console.log(`Sending reply to email ${selectedEmail.id}: ${reply}`);
+      setReply('');
+      setSelectedEmail(null);
+    } catch (err) {
+      setError('Failed to send reply. Please try again.');
+    }
+  };
+
+  const containerStyle = {
+    maxWidth: '800px',
+    margin: '0 auto',
+    padding: '1rem',
+  };
+
+  const emailListStyle = {
+    borderRight: `1px solid ${theme.borderColor}`,
+    padding: '1rem',
+    width: '30%',
+    float: 'left' as const,
+  };
+
+  const emailDetailStyle = {
+    padding: '1rem',
+    width: '70%',
+    float: 'left' as const,
+  };
+
+  const emailItemStyle = {
+    cursor: 'pointer',
+    padding: '0.5rem',
+    borderBottom: `1px solid ${theme.borderColor}`,
+  };
+
+  const inputStyle = {
+    width: '100%',
+    padding: '0.5rem',
+    fontSize: '1rem',
+    border: `1px solid ${theme.borderColor}`,
+    borderRadius: '0.25rem',
+    marginBottom: '1rem',
+  };
+
+  const buttonStyle = {
+    padding: '0.5rem 1rem',
+    fontSize: '1rem',
+    backgroundColor: theme.primaryColor,
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.25rem',
+    cursor: 'pointer',
+  };
+
+  if (!user) {
+    return <div>Please log in to view your emails.</div>;
+  }
+
+  return (
+    <div style={containerStyle}>
+      <div style={emailListStyle}>
+        <h2>Inbox</h2>
+        {emails.map(email => (
+          <div key={email.id} style={emailItemStyle} onClick={() => handleSelectEmail(email)}>
+            <strong>{email.subject}</strong>
+            <div>{email.sender}</div>
+            <small>{email.date}</small>
+          </div>
+        ))}
+      </div>
+      <div style={emailDetailStyle}>
+        {selectedEmail ? (
+          <>
+            <h2>{selectedEmail.subject}</h2>
+            <p>From: {selectedEmail.sender}</p>
+            <p>Date: {selectedEmail.date}</p>
+            <div>{selectedEmail.body}</div>
+            <form onSubmit={handleSendReply}>
+              <textarea
+                style={inputStyle}
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                placeholder="Type your reply..."
+              />
+              <button style={buttonStyle} type="submit">Send Reply</button>
+            </form>
+          </>
+        ) : (
+          <p>Select an email to view details</p>
+        )}
+      </div>
+      {error && <ErrorMessage message={error} />}
+    </div>
+  );
+};
+
+export default EmailManagement;
+```
+
+
+
+
+
+### DocumentUploadView
+
+The document upload component for uploading and managing documents.
+
+```typescriptreact
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import ErrorMessage from './ErrorMessage';
+
+interface Document {
+  id: string;
+  name: string;
+  uploadDate: string;
+  size: number;
+}
+
+const DocumentUploadView: React.FC = () => {
+  const { user } = useAuth();
+  const { theme } = useTheme();
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Fetch documents
+    // This is a placeholder and should be replaced with actual API call
+    setDocuments([
+      { id: '1', name: 'document1.pdf', uploadDate: '2023-05-01', size: 1024 },
+      { id: '2', name: 'document2.docx', uploadDate: '2023-05-02', size: 2048 },
+    ]);
+  }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setSelectedFile(e.target.files[0]);
+    }
+  };
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFile) return;
+
+    try {
+      // Upload file
+      // This is a placeholder and should be replaced with actual API call
+      for (let i = 0; i <= 100; i += 10) {
+        setUploadProgress(i);
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const newDocument: Document = {
+        id: Date.now().toString(),
+        name: selectedFile.name,
+        uploadDate: new Date().toISOString().split('T')[0],
+        size: selectedFile.size,
+      };
+      setDocuments(prev => [...prev, newDocument]);
+      setSelectedFile(null);
+      setUploadProgress(0);
+    } catch (err) {
+      setError('Failed to upload document. Please try again.');
+    }
+  };
+
+  const containerStyle = {
+    maxWidth: '800px',
+    margin: '0 auto',
+    padding: '1rem',
+  };
+
+  const formStyle = {
+    marginBottom: '2rem',
+  };
+
+  const inputStyle = {
+    marginBottom: '1rem',
+  };
+
+  const buttonStyle = {
+    padding: '0.5rem 1rem',
+    fontSize: '1rem',
+    backgroundColor: theme.primaryColor,
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.25rem',
+    cursor: 'pointer',
+  };
+
+  const progressBarStyle = {
+    width: '100%',
+    backgroundColor: theme.borderColor,
+    marginBottom: '1rem',
+  };
+
+  const progressStyle = {
+    width: `${uploadProgress}%`,
+    backgroundColor: theme.primaryColor,
+    height: '20px',
+  };
+
+  const documentListStyle = {
+    listStyle: 'none',
+    padding: 0,
+  };
+
+  const documentItemStyle = {
+    padding: '0.5rem',
+    borderBottom: `1px solid ${theme.borderColor}`,
+  };
+
+  if (!user) {
+    return <div>Please log in to upload and view documents.</div>;
+  }
+
+  return (
+    <div style={containerStyle}>
+      <h2>Document Upload</h2>
+      <form onSubmit={handleUpload} style={formStyle}>
+        <input
+          type="file"
+          onChange={handleFileChange}
+          style={inputStyle}
+        />
+        <button style={buttonStyle} type="submit" disabled={!selectedFile}>
+          Upload
+        </button>
+      </form>
+      {uploadProgress > 0 && (
+        <div style={progressBarStyle}>
+          <div style={progressStyle}></div>
+        </div>
+      )}
+      <h3>Uploaded Documents</h3>
+      <ul style={documentListStyle}>
+        {documents.map(doc => (
+          <li key={doc.id} style={documentItemStyle}>
+            <strong>{doc.name}</strong>
+            <div>Upload Date: {doc.uploadDate}</div>
+            <div>Size: {doc.size} bytes</div>
+          </li>
+        ))}
+      </ul>
+      {error && <ErrorMessage message={error} />}
+    </div>
+  );
+};
+
+export default DocumentUploadView;
+```
+
+
+
+
+
+### FileManager
+
+The file management component for listing, viewing, and editing text files.
+
+```typescriptreact
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import ErrorMessage from './ErrorMessage';
+
+interface File {
+  id: string;
+  name: string;
+  content: string;
+  lastModified: string;
+}
+
+const FileManager: React.FC = () => {
+  const { user } = useAuth();
+  const { theme } = useTheme();
+  const [files, setFiles] = useState<File[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [editedContent, setEditedContent] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Fetch files
+    // This is a placeholder and should be replaced with actual API call
+    setFiles([
+      { id: '1', name: 'file1.txt', content: 'This is the content of file 1', lastModified: '2023-05-01' },
+      { id: '2', name: 'file2.txt', content: 'This is the content of file 2', lastModified: '2023-05-02' },
+    ]);
+  }, []);
+
+  const handleSelectFile = (file: File) => {
+    setSelectedFile(file);
+    setEditedContent(file.content);
+  };
+
+  const handleSaveFile = async () => {
+    if (!selectedFile) return;
+
+    try {
+      // Save file
+      // This is a placeholder and should be replaced with actual API call
+      const updatedFile = { ...selectedFile, content: editedContent, lastModified: new Date().toISOString().split('T')[0] };
+      setFiles(prev => prev.map(f => f.id === updatedFile.id ? updatedFile : f));
+      setSelectedFile(updatedFile);
+    } catch (err) {
+      setError('Failed to save file. Please try again.');
+    }
+  };
+
+  const containerStyle = {
+    maxWidth: '800px',
+    margin: '0 auto',
+    padding: '1rem',
+  };
+
+  const fileListStyle = {
+    borderRight: `1px solid ${theme.borderColor}`,
+    padding: '1rem',
+    width: '30%',
+    float: 'left' as const,
+  };
+
+  const fileDetailStyle = {
+    padding: '1rem',
+    width: '70%',
+    float: 'left' as const,
+  };
+
+  const fileItemStyle = {
+    cursor: 'pointer',
+    padding: '0.5rem',
+    borderBottom: `1px solid ${theme.borderColor}`,
+  };
+
+  const textareaStyle = {
+    width: '100%',
+    height: '300px',
+    padding: '0.5rem',
+    fontSize: '1rem',
+    border: `1px solid ${theme.borderColor}`,
+    borderRadius: '0.25rem',
+    marginBottom: '1rem',
+  };
+
+  const buttonStyle = {
+    padding: '0.5rem 1rem',
+    fontSize: '1rem',
+    backgroundColor: theme.primaryColor,
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.25rem',
+    cursor: 'pointer',
+  };
+
+  if (!user) {
+    return <div>Please log in to manage your files.</div>;
+  }
+
+  return (
+    <div style={containerStyle}>
+      <div style={fileListStyle}>
+        <h2>Files</h2>
+        {files.map(file => (
+          <div key={file.id} style={fileItemStyle} onClick={() => handleSelectFile(file)}>
+            <strong>{file.name}</strong>
+            <div>Last Modified: {file.lastModified}</div>
+          </div>
+        ))}
+      </div>
+      <div style={fileDetailStyle}>
+        {selectedFile ? (
+          <>
+            <h2>{selectedFile.name}</h2>
+            <textarea
+              style={textareaStyle}
+              value={editedContent}
+              onChange={(e) => setEditedContent(e.target.value)}
+            />
+            <button style={buttonStyle} onClick={handleSaveFile}>Save Changes</button>
+          </>
+        ) : (
+          <p>Select a file to view and edit</p>
+        )}
+      </div>
+      {error && <ErrorMessage message={error} />}
+    </div>
+  );
+};
+
+export default FileManager;
+```
+
+
+
+
+
+### UserSettings
+
+The user settings component for managing preferences and account details.
+
+```typescriptreact
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import ErrorMessage from './ErrorMessage';
+
+const UserSettings: React.FC = () => {
+  const { user, updateUser } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      setName(user.name);
+      setEmail(user.email);
+    }
+  }, [user]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await updateUser({ name, email });
+      setError(null);
+    } catch (err) {
+      setError('Failed to update user settings. Please try again.');
+    }
+  };
+
+  const containerStyle = {
+    maxWidth: '600px',
+    margin: '0 auto',
+    padding: '1rem',
+  };
+
+  const formStyle = {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '1rem',
+  };
+
+  const inputStyle = {
+    padding: '0.5rem',
+    fontSize: '1rem',
+    border: `1px solid ${theme.borderColor}`,
+    borderRadius: '0.25rem',
+  };
+
+  const buttonStyle = {
+    padding: '0.5rem 1rem',
+    fontSize: '1rem',
+    backgroundColor: theme.primaryColor,
+    color: 'white',
+    border: 'none',
+    borderRadius: '0.25rem',
+    cursor: 'pointer',
+  };
+
+  const toggleContainerStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1rem',
+    marginTop: '1rem',
+  };
+
+  if (!user) {
+    return <div>Please log in to access user settings.</div>;
+  }
+
+  return (
+    <div style={containerStyle}>
+      <h2>User Settings</h2>
+      <form onSubmit={handleSubmit} style={formStyle}>
+        <input
+          style={inputStyle}
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name"
+        />
+        <input
+          style={inputStyle}
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email"
+        />
+        <button style={buttonStyle} type="submit">Save Changes</button>
+      </form>
+      <div style={toggleContainerStyle}>
+        <label htmlFor="themeToggle">Dark Mode</label>
+        <input
+          id="themeToggle"
+          type="checkbox"
+          checked={theme.backgroundColor === '#343a40'}
+          onChange={toggleTheme}
+        />
+      </div>
+      {error && <ErrorMessage message={error} />}
+    </div>
+  );
+};
+
+export default UserSettings;
+```
+
+
+
+
+
+## Contexts
+
+### AuthContext
+
+The authentication context for managing user authentication state.
+
+```typescriptreact
+import React, { createContext, useState, useContext } from 'react';
+import { Route } from '../App';
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface AuthContextType {
+  user: User | null;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => void;
+  updateUser: (updates: Partial<User>) => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode, setCurrentRoute: (route: Route) => void }> = ({ children, setCurrentRoute }) => {
+  const [user, setUser] = useState<User | null>(null);
+
+  const login = async (email: string, password: string) => {
+    // This is a placeholder and should be replaced with actual API call
+    const response = await new Promise<User>((resolve) => 
+      setTimeout(() => resolve({ id: '1', name: 'John Doe', email }), 1000)
+    );
+    setUser(response);
+    setCurrentRoute('/');
+  };
+
+  const logout = () => {
+    setUser(null);
+    setCurrentRoute('/login');
+  };
+
+  const updateUser = async (updates: Partial<User>) => {
+    // This is a placeholder and should be replaced with actual API call
+    const updatedUser = { ...user, ...updates } as User;
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    setUser(updatedUser);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout, updateUser }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+```
+
+### ThemeContext
+
+The theme context for managing the application's theme.
+
+```typescriptreact
+import React, { createContext, useState, useContext } from 'react';
+
+interface Theme {
+  primaryColor: string;
+  textColor: string;
+  backgroundColor: string;
+  cardBg: string;
+  navBg: string;
+  borderColor: string;
+}
+
+interface ThemeContextType {
+  theme: Theme;
+  toggleTheme: () => void;
+}
+
+const lightTheme: Theme = {
+  primaryColor: '#007bff',
+  textColor: '#333',
+  backgroundColor: '#fff',
+  cardBg: '#f8f9fa',
+  navBg: '#e9ecef',
+  borderColor: '#dee2e6',
+};
+
+const darkTheme: Theme = {
+  primaryColor: '#17a2b8',
+  textColor: '#f8f9fa',
+  backgroundColor: '#343a40',
+  cardBg: '#495057',
+  navBg: '#212529',
+  borderColor: '#6c757d',
+};
+
+const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [theme, setTheme] = useState<Theme>(lightTheme);
+
+  const toggleTheme = () => {
+    setTheme(prevTheme => prevTheme === lightTheme ? darkTheme : lightTheme);
+  };
+
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+export const useTheme = () => {
+  const context = useContext(ThemeContext);
+  if (context === undefined) {
+    throw new Error('useTheme must be used within a ThemeProvider');
+  }
+  return context;
+};
+```
+
+## Utility Components
+
+### ErrorMessage
+
+A reusable component for displaying error messages.
+
+```typescriptreact
+import React from 'react';
+
+interface ErrorMessageProps {
+  message: string;
+}
+
+const ErrorMessage: React.FC<ErrorMessageProps> = ({ message }) => {
+  const errorStyle = {
+    backgroundColor: '#f8d7da',
+    color: '#721c24',
+    padding: '0.75rem 1.25rem',
+    marginBottom: '1rem',
+    border: '1px solid #f5c6cb',
+    borderRadius: '0.25rem',
+  };
+
+  return (
+    <div style={errorStyle} role="alert">
+      {message}
+    </div>
+  );
+};
+
+export default ErrorMessage;
+```
+
+### Loading
+
+A simple loading component to display while content is being fetched.
+
+```typescriptreact
+import React from 'react';
+import { useTheme } from '../contexts/ThemeContext';
+
+const Loading: React.FC = () => {
+  const { theme } = useTheme();
+
+  const loadingStyle = {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '100vh',
+    fontSize: '1.5rem',
+    color: theme.textColor,
+  };
+
+  return (
+    <div style={loadingStyle}>
+      Loading...
+    </div>
+  );
+};
+
+export default Loading;
+```
+
+## Next Steps
+
+To fully implement this AI Chat Application, your developer should:
+
+1. Implement React Testing Library tests for all components.
+2. Ensure that all components are fully responsive and accessible.
+3. Implement proper error handling and loading states for all API calls.
+4. Add proper TypeScript types for all props and state variables.
+5. Optimize performance using React.memo, useMemo, and useCallback where appropriate.
+6. Implement proper authentication and authorization checks for all API calls.
+7. Add proper documentation and comments to the code.
+8. Replace placeholder API calls with actual backend integration.
+9. Implement proper state management (e.g., using React Context or a state management library like Redux) for more complex state interactions.
+10. Add proper form validation for user inputs.
+11. Implement proper security measures, such as input sanitization and CSRF protection.
+12. Add proper logging and error tracking.
+13. Optimize the application for performance, including code splitting and lazy loading.
+14. Implement proper SEO optimization.
+15. Add proper analytics tracking.
+16. Implement proper caching strategies for API responses.
+17. Add proper internationalization support if required.
+18. Implement proper accessibility features, ensuring the application is usable by people with disabilities.
+19. Add proper animations and transitions to enhance user experience.
+20. Implement proper data persistence strategies, such as local storage for offline support.
+
+
+By following these steps and implementing the provided components, your developer should be able to create a fully functional AI Chat Application with the requested features.
+
+```plaintext
+
+This comprehensive guide should provide your developer with all the necessary code, explanations, and next steps to implement the AI Chat Application. The code is structured into reusable components and uses React hooks and context for state management. The developer should replace the placeholder API calls with actual backend integration and implement the additional features and optimizations listed in the Next Steps section.
+```
