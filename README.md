@@ -28,3 +28,13 @@ Original Prompt:
 
 Front end components
 
+Now, let's provide the list of components and their previews:
+
+1. Navigation Component
+2. Login Component
+3. ChatView Component
+4. EmailManagement Component
+5. DocumentUploadView Component
+6. FileManager Component
+7. UserSettings Component
+
